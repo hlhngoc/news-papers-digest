@@ -125,9 +125,25 @@ def build_html(digest: dict, language: str) -> str:
 
 def send(subject: str, html_body: str) -> None:
     """Send the digest via Gmail SMTP (TLS on 587)."""
-    sender = os.environ["GMAIL_ADDRESS"]
-    password = os.environ["GMAIL_APP_PASSWORD"]
-    recipient = os.environ.get("DIGEST_TO", sender)
+    sender = os.environ.get("GMAIL_ADDRESS", "").strip()
+    password = os.environ.get("GMAIL_APP_PASSWORD", "").strip()
+    recipient = (os.environ.get("DIGEST_TO", "").strip() or sender)
+
+    # Fail loud and clear instead of letting smtplib raise a cryptic 555 error.
+    if not sender or "@" not in sender:
+        raise RuntimeError(
+            f"GMAIL_ADDRESS is missing or invalid (length={len(sender)}). "
+            "Check the GMAIL_ADDRESS secret in GitHub -- re-type it by hand, "
+            "no extra spaces or newlines."
+        )
+    if not password:
+        raise RuntimeError(
+            "GMAIL_APP_PASSWORD is missing or empty. Check the secret in GitHub."
+        )
+    if not recipient or "@" not in recipient:
+        raise RuntimeError(
+            f"Recipient address is missing or invalid (length={len(recipient)})."
+        )
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
