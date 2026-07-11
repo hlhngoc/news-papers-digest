@@ -17,10 +17,18 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 from google import genai
+from google.genai import errors as genai_errors
 
 _client: genai.Client | None = None
+
+# Retry on transient server-side issues (overloaded model, rate limit, etc).
+# 503/429 are almost always temporary and clear up within a minute or two.
+_RETRYABLE_CODES = {429, 500, 502, 503, 504}
+_MAX_ATTEMPTS = 5
+_BASE_DELAY_S = 8  # exponential backoff: 8s, 16s, 32s, 64s...
 
 
 def _get_client() -> genai.Client:
@@ -34,17 +42,33 @@ def _get_client() -> genai.Client:
 
 
 def _generate_json(model: str, prompt: str) -> dict | list:
-    """Call Gemini and parse a JSON response. Robust to stray ```json fences."""
-    resp = _get_client().models.generate_content(
-        model=model,
-        contents=prompt,
-        config={"response_mime_type": "application/json"},
-    )
-    text = (resp.text or "").strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        text = text[text.find("{") if "{" in text else text.find("["):]
-    return json.loads(text)
+    """Call Gemini and parse a JSON response. Retries on transient server
+    errors (503 overloaded, 429 rate-limited) with exponential backoff.
+    Robust to stray json code fences in the response text."""
+    last_err = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            resp = _get_client().models.generate_content(
+                model=model,
+                contents=prompt,
+                config={"response_mime_type": "application/json"},
+            )
+            text = (resp.text or "").strip()
+            if text.startswith("```"):
+                text = text.strip("`")
+                text = text[text.find("{") if "{" in text else text.find("["):]
+            return json.loads(text)
+        except genai_errors.APIError as e:
+            last_err = e
+            code = getattr(e, "code", None)
+            if code in _RETRYABLE_CODES and attempt < _MAX_ATTEMPTS:
+                delay = _BASE_DELAY_S * (2 ** (attempt - 1))
+                print(f"[gemini] {code} on attempt {attempt}/{_MAX_ATTEMPTS}, "
+                      f"retrying in {delay}s...")
+                time.sleep(delay)
+                continue
+            raise
+    raise last_err
 
 
 # --------------------------------------------------------------------- rank
