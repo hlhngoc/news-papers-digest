@@ -1,0 +1,99 @@
+# ==========================================================================
+# profile.yaml — THE ONE FILE YOU EDIT WHEN YOUR INTERESTS CHANGE
+# ==========================================================================
+
+# Free-text description of who you are. The LLM reads this verbatim to decide
+# what's relevant and to write the "why this matters for you" line.
+profile: |
+  I'm a first-year Data Science student at VinUniversity (Hanoi).
+  My core interests, in rough priority order:
+    1. Quantitative finance — algorithmic trading, alpha research, factor models,
+       market microstructure, futures (esp. index futures like VN30F1M),
+       backtesting methodology, regime detection.
+    2. Applied machine learning & statistics — practical DS/ML methods I can use
+       in projects: time series, calibration, clustering, regression, feature
+       engineering, model evaluation. I care about methods, not pure theory.
+    3. IoT / air quality sensing — low-cost sensor calibration, activity
+       recognition, Arduino-based environmental sensing (this is my UROP).
+    4. Consulting & career — management consulting insights (McKinsey/BCG/Bain),
+       data-driven strategy, the economics/management side of a DS career,
+       how quant/DS skills translate to high-paying roles.
+  I want a working professional's practical angle, not deep theoretical proofs.
+  Bias toward things I could actually apply, cite in a project, or use to make
+  a career decision.
+
+# How many items per section of the daily digest.
+papers_count: 3     # 📄 Papers section
+news_count: 3       # 📰 News & Industry section
+
+# Digest language. "en" or "vi".
+#   en -> everything in English.
+#   vi -> titles + summaries translated to Vietnamese, original title kept too.
+language: vi
+
+# Which Gemini model powers ranking + summaries.
+#   gemini-flash-latest    -> always the newest Flash (currently 3.5). Good default.
+#   gemini-3.1-flash-lite  -> cheapest, near-free. Fine for this task.
+model: gemini-flash-latest
+
+# ------------------------------------------------------------------ SOURCES
+sources:
+  # ---------------------------------------------------- PAPERS pool
+  # arXiv categories. See https://arxiv.org/category_taxonomy
+  arxiv_categories:
+    - cs.LG      # Machine Learning
+    - cs.AI      # Artificial Intelligence
+    - cs.CL      # Computation & Language (NLP)
+    - stat.ML    # Statistics - Machine Learning
+    - stat.AP    # Statistics - Applications
+    - q-fin.TR   # Quantitative Finance - Trading & Microstructure
+    - q-fin.ST   # Quantitative Finance - Statistical Finance
+
+  # How far back to look (hours). arXiv skips weekends, so keep >24h.
+  arxiv_lookback_hours: 60
+
+  # Max papers per category before ranking.
+  arxiv_per_category: 40
+
+  # Semantic Scholar enrichment (optional, free, no API key needed at low volume).
+  # Looks up each arXiv paper and attaches citation count + influential citations.
+  # Brand-new papers usually have 0 citations, but when a hot paper gets traction
+  # fast, this surfaces it. Set false to skip (saves ~1 min per run).
+  semantic_scholar: true
+
+  # ---------------------------------------------------- NEWS pool
+  # Hacker News: keep front-page stories whose title matches these keywords.
+  hackernews_keywords:
+    - " ai "
+    - " ml "
+    - llm
+    - machine learning
+    - deep learning
+    - neural
+    - data science
+    - quant
+    - trading
+    - transformer
+    - diffusion
+    - agent
+    - consulting
+    - mckinsey
+  hackernews_min_score: 50
+
+  # Tech-news RSS (goes into the NEWS pool).
+  news_feeds:
+    - https://techcrunch.com/category/artificial-intelligence/feed/
+    - https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+    # Optional local tech news (Vietnamese). Remove if too noisy.
+    - https://vnexpress.net/rss/so-hoa.rss
+
+  # Consulting / strategy RSS (also NEWS pool).
+  consulting_feeds:
+    - https://www.mckinsey.com/insights/rss
+    - https://sloanreview.mit.edu/feed/
+    - https://hbr.org/resources/xml/rss/hbr_rss_feed.xml
+    - https://www.bcg.com/rss/insights
+    - https://knowledge.wharton.upenn.edu/feed/
+
+# Per-pool cap on candidates sent to the ranker (protects token bill).
+max_candidates_per_pool: 60
