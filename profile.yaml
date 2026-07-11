@@ -81,10 +81,22 @@ sources:
   hackernews_min_score: 50
 
   # Tech-news RSS (goes into the NEWS pool).
+  # Broken feeds are skipped automatically, so trimming this list is safe.
   news_feeds:
+    # --- General AI/tech journalism ---
     - https://techcrunch.com/category/artificial-intelligence/feed/
     - https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
-    # Optional local tech news (Vietnamese). Remove if too noisy.
+    - https://arstechnica.com/ai/feed/
+    - https://venturebeat.com/category/ai/feed/
+    - https://www.technologyreview.com/topic/artificial-intelligence/feed
+    # --- AI research / practitioner blogs ---
+    - https://huggingface.co/blog/feed.xml            # HF: models, libraries, how-tos
+    - https://bair.berkeley.edu/blog/feed.xml         # Berkeley AI Research
+    - https://thegradient.pub/rss/                    # deeper AI essays
+    - https://www.marktechpost.com/feed/              # daily AI paper/tool roundups
+    # --- Data science focused ---
+    - https://www.kdnuggets.com/feed                  # DS/ML news, tutorials, jobs
+    # --- Local tech news (Vietnamese). Remove if too noisy. ---
     - https://vnexpress.net/rss/so-hoa.rss
 
   # Consulting / strategy RSS (also NEWS pool).
