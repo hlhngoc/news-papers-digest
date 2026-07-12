@@ -53,10 +53,12 @@ def run(dry_run: bool = False) -> None:
     # 1. FETCH -----------------------------------------------------------
     papers_raw, news_raw = fetchers.fetch_all(cfg)
 
-    # 1b. DISCOVERY (optional) — Gemini web-search for extra items --------
-    if cfg.get("discovery", False) and not dry_run:
+    # 1b. DISCOVERY (optional) — free search APIs for extra items ---------
+    if cfg.get("discovery", False):
         found = discovery.discover(
-            cfg["profile"], model, cfg.get("discovery_count", 6)
+            cfg.get("discovery_queries", []),
+            cfg["sources"]["hackernews_min_score"],
+            cfg.get("discovery_per_query", 3),
         )
         for it in found:
             (papers_raw if it["pool"] == "papers" else news_raw).append(it)

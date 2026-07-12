@@ -78,6 +78,55 @@ def fetch_arxiv(categories: list[str], lookback_hours: int,
             print(f"[arxiv] {cat} failed: {e}")
         time.sleep(1)
 
+    if not out:
+        print("[arxiv] package returned 0 papers, trying HTTP fallback...")
+        out = _fetch_arxiv_http(categories, cutoff, per_category)
+
+    return out
+
+
+_ARXIV_HTTP = "https://export.arxiv.org/api/query"
+
+
+def _fetch_arxiv_http(categories: list[str], cutoff, per_category: int) -> list[dict]:
+    """Fallback arXiv fetch via the raw Atom API + feedparser, used when the
+    `arxiv` package returns nothing (it intermittently yields 0 on throttling)."""
+    out: list[dict] = []
+    for cat in categories:
+        try:
+            r = requests.get(
+                _ARXIV_HTTP,
+                params={
+                    "search_query": f"cat:{cat}",
+                    "sortBy": "submittedDate",
+                    "sortOrder": "descending",
+                    "max_results": per_category,
+                },
+                timeout=_HTTP_TIMEOUT,
+            )
+            parsed = feedparser.parse(r.text)
+            for e in parsed.entries:
+                published = _entry_datetime(e)
+                if published and published < cutoff:
+                    continue
+                raw_id = e.get("id", "")
+                short = raw_id.split("/abs/")[-1].split("v")[0]
+                if not short:
+                    continue
+                out.append({
+                    "id": short,
+                    "pool": "papers",
+                    "source": "arXiv",
+                    "title": e.get("title", "").strip().replace("\n", " "),
+                    "authors": [a.get("name", "") for a in e.get("authors", [])],
+                    "abstract": e.get("summary", "").strip().replace("\n", " "),
+                    "url": e.get("link", raw_id),
+                    "published": (published or datetime.now(timezone.utc)).isoformat(),
+                    "citations": None,
+                })
+        except Exception as ex:
+            print(f"[arxiv-http] {cat} failed: {ex}")
+        time.sleep(3)
     return out
 
 

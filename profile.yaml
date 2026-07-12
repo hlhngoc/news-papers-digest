@@ -37,12 +37,20 @@ language: vi
 model: gemini-flash-latest
 
 # ---------------------------------------------------------------- DISCOVERY
-# Let Gemini use live Google Search to find extra items beyond the fixed feeds.
-# These compete in the normal ranking, so they only appear if actually relevant.
-# NOTE: grounding bills a few search queries per run (NOT free-tier), and links
-# are occasionally imperfect. Set false to run purely on curated feeds (free).
+# Find extra items BEYOND the fixed feeds using FREE search APIs
+# (Semantic Scholar for papers, Hacker News search for news). No API key,
+# no cost — results just compete in the normal ranking, tagged 🔎.
+# Edit these queries when your interests shift (this is the discovery "profile").
 discovery: true
-discovery_count: 6      # how many items to ask Gemini to surface
+discovery_queries:
+  - PM2.5 low-cost sensor calibration
+  - wavelet scattering time series forecasting
+  - cross wavelet coherence signals
+  - VN30 index futures quantitative trading
+  - factor model alpha research backtesting
+  - LLM agents for data analysis
+  - management consulting AI strategy
+discovery_per_query: 3      # items to pull per query, per source
 
 # ------------------------------------------------------------------ SOURCES
 sources:
