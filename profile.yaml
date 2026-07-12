@@ -36,6 +36,14 @@ language: vi
 #   gemini-3.1-flash-lite  -> cheapest, near-free. Fine for this task.
 model: gemini-flash-latest
 
+# ---------------------------------------------------------------- DISCOVERY
+# Let Gemini use live Google Search to find extra items beyond the fixed feeds.
+# These compete in the normal ranking, so they only appear if actually relevant.
+# NOTE: grounding bills a few search queries per run (NOT free-tier), and links
+# are occasionally imperfect. Set false to run purely on curated feeds (free).
+discovery: true
+discovery_count: 6      # how many items to ask Gemini to surface
+
 # ------------------------------------------------------------------ SOURCES
 sources:
   # ---------------------------------------------------- PAPERS pool

@@ -71,6 +71,51 @@ def _generate_json(model: str, prompt: str) -> dict | list:
     raise last_err
 
 
+def generate_grounded_json(model: str, prompt: str) -> dict | list:
+    """Like _generate_json but enables Gemini's Google Search tool so the model
+    can actually browse the web. NOTE: grounding can't be combined with a forced
+    JSON mime type, so we ask for JSON in the prompt and parse it loosely.
+    Retries on transient 503/429 with the same backoff."""
+    from google.genai import types
+
+    last_err = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            resp = _get_client().models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                ),
+            )
+            text = (resp.text or "").strip()
+            # Grounded responses often wrap JSON in prose/fences; extract it.
+            if "```" in text:
+                text = text.split("```")[1] if text.count("```") >= 2 else text
+                text = text.lstrip("json").strip("`").strip()
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1:
+                text = text[start:end + 1]
+            return json.loads(text)
+        except genai_errors.APIError as e:
+            last_err = e
+            code = getattr(e, "code", None)
+            if code in _RETRYABLE_CODES and attempt < _MAX_ATTEMPTS:
+                delay = _BASE_DELAY_S * (2 ** (attempt - 1))
+                print(f"[gemini] {code} on grounded attempt {attempt}/"
+                      f"{_MAX_ATTEMPTS}, retrying in {delay}s...")
+                time.sleep(delay)
+                continue
+            raise
+        except (json.JSONDecodeError, ValueError) as e:
+            # Grounded output is chattier and can fail to parse; don't kill the
+            # whole run over a failed discovery pass.
+            print(f"[discovery] could not parse grounded JSON: {e}")
+            return {}
+    raise last_err
+
+
 # --------------------------------------------------------------------- rank
 def rank(candidates: list[dict], profile: str, k: int, model: str,
          pool_name: str) -> list[dict]:

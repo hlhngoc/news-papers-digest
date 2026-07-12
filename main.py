@@ -22,6 +22,7 @@ from datetime import datetime
 import yaml
 
 import db
+import discovery
 import emailer
 import fetchers
 import ranker
@@ -51,6 +52,14 @@ def run(dry_run: bool = False) -> None:
 
     # 1. FETCH -----------------------------------------------------------
     papers_raw, news_raw = fetchers.fetch_all(cfg)
+
+    # 1b. DISCOVERY (optional) — Gemini web-search for extra items --------
+    if cfg.get("discovery", False) and not dry_run:
+        found = discovery.discover(
+            cfg["profile"], model, cfg.get("discovery_count", 6)
+        )
+        for it in found:
+            (papers_raw if it["pool"] == "papers" else news_raw).append(it)
 
     # 2. DEDUPE + trim per pool -------------------------------------------
     papers = _prep_pool(papers_raw, cap)
