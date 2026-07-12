@@ -21,6 +21,7 @@ Unified item schema:
 
 from __future__ import annotations
 
+import hashlib
 import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -30,6 +31,14 @@ import feedparser
 import requests
 
 _HTTP_TIMEOUT = 20
+
+
+def _stable_id(prefix: str, key: str) -> str:
+    """Deterministic id across runs. Python's built-in hash() is salted
+    per-process (PYTHONHASHSEED), so it MUST NOT be used for dedupe keys —
+    it produced a new id every run and broke RSS dedupe. md5 is stable."""
+    digest = hashlib.md5(key.encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"
 
 
 # --------------------------------------------------------------------- arXiv
@@ -55,7 +64,7 @@ def fetch_arxiv(categories: list[str], lookback_hours: int,
                 if published < cutoff:
                     break  # newest-first, safe to stop early
                 out.append({
-                    "id": r.get_short_id(),                 # e.g. 2401.01234v1
+                    "id": r.get_short_id().split("v")[0],   # versionless, e.g. 2401.01234
                     "pool": "papers",
                     "source": "arXiv",
                     "title": r.title.strip().replace("\n", " "),
@@ -184,7 +193,7 @@ def fetch_rss(feeds: list[str], lookback_hours: int = 168,
             guid = entry.get("id") or entry.get("link") or entry.get("title", "")
             summary = entry.get("summary", "") or entry.get("description", "")
             out.append({
-                "id": f"rss-{abs(hash(guid))}",
+                "id": _stable_id("rss", guid),
                 "pool": "news",
                 "source": source,
                 "title": entry.get("title", "").strip(),
