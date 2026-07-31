@@ -140,7 +140,11 @@ def rank(candidates: list[dict], profile: str, k: int, model: str,
         if pool_name == "papers" else
         "These are NEWS / INDUSTRY items (tech news, HN stories, consulting "
         "insights). Reward career relevance, industry shifts they should know "
-        "about, and practical tools; penalise clickbait and product PR fluff."
+        "about, practical tools, AND notable mainstream AI news such as major "
+        "model releases, funding rounds, acquisitions, and product launches "
+        "from outlets like TechCrunch/VentureBeat/WIRED — these keep them "
+        "current on the field. Only skip pure clickbait with no substance. "
+        "Aim for a mix of sources rather than 3 items from the same one."
     )
 
     prompt = f"""You are a research curator building a daily digest for one person.

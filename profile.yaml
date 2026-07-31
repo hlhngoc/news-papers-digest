@@ -24,7 +24,7 @@ profile: |
 
 # How many items per section of the daily digest.
 papers_count: 3     # 📄 Papers section
-news_count: 3       # 📰 News & Industry section
+news_count: 5       # 📰 News & Industry section (more slots = more mainstream news gets through)
 
 # Digest language. "en" or "vi".
 #   en -> everything in English.
@@ -112,6 +112,9 @@ sources:
     - https://www.marktechpost.com/feed/              # daily AI paper/tool roundups
     # --- Data science focused ---
     - https://www.kdnuggets.com/feed                  # DS/ML news, tutorials, jobs
+    # --- TLDR newsletters (community-maintained RSS; may occasionally break) ---
+    - https://bullrich.dev/tldr-rss/ai.rss            # TLDR AI: daily model/research/tool roundup
+    - https://bullrich.dev/tldr-rss/data.rss          # TLDR Data: data science / data eng
     # --- Local tech news (Vietnamese). Remove if too noisy. ---
     - https://vnexpress.net/rss/so-hoa.rss
 
