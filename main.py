@@ -123,8 +123,7 @@ def run(dry_run: bool = False) -> None:
     chosen = top_papers + top_news
     if not chosen:
         print("[done] ranker found nothing relevant.")
-        db.mark_seen(papers + news)  # don't re-rank the same items tomorrow
-        return
+        return  # nothing sent -> mark nothing, keep items eligible next run
 
     # 4. WRITE-UP — one call covering both pools ---------------------------
     digest = ranker.write_up(chosen, cfg["profile"], model, lang)
@@ -139,8 +138,11 @@ def run(dry_run: bool = False) -> None:
     emailer.send(subject, html_body)
 
     # 6. RECORD -------------------------------------------------------------
-    db.mark_seen(papers + news)   # everything considered -> never re-show
-    db.log_sent(digest["items"])  # audit trail of what was actually sent
+    # Only mark items we ACTUALLY SENT as seen. Items fetched but not selected
+    # stay eligible for future runs, so the digest doesn't run dry when you
+    # re-run several times in one day.
+    db.mark_seen(digest["items"])
+    db.log_sent(digest["items"])
     print("[done] digest complete.")
 
 
