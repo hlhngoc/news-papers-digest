@@ -24,7 +24,19 @@ profile: |
 
 # How many items per section of the daily digest.
 papers_count: 3     # 📄 Papers section
-news_count: 5       # 📰 News & Industry section (more slots = more mainstream news gets through)
+news_count: 7       # 📰 News & Industry section
+
+# Guarantee at least this many items from big mainstream outlets each day,
+# even if the ranker would otherwise fill every slot with technical/research
+# news. Set to 0 to disable and rank purely on relevance.
+news_mainstream_min: 2
+news_mainstream_domains:
+  - techcrunch.com
+  - venturebeat.com
+  - wired.com
+  - theverge.com
+  - arstechnica.com
+  - technologyreview.com
 
 # Digest language. "en" or "vi".
 #   en -> everything in English.

@@ -89,6 +89,35 @@ def run(dry_run: bool = False) -> None:
                              pool_name="papers") if papers else []
     top_news = ranker.rank(news, cfg["profile"], k_news, model,
                            pool_name="news") if news else []
+
+    # 3b. GUARANTEE a minimum of mainstream news (TechCrunch/VentureBeat/etc).
+    # If the normal ranking didn't surface enough, rank the mainstream-only
+    # candidates and slot the best of them in, keeping total at k_news.
+    min_ms = cfg.get("news_mainstream_min", 0)
+    domains = [d.lower() for d in cfg.get("news_mainstream_domains", [])]
+    if news and min_ms > 0 and domains:
+        def _is_mainstream(it: dict) -> bool:
+            url = (it.get("url") or "").lower()
+            return any(d in url for d in domains)
+
+        have = [it for it in top_news if _is_mainstream(it)]
+        if len(have) < min_ms:
+            ms_pool = [it for it in news if _is_mainstream(it)]
+            if ms_pool:
+                ms_top = ranker.rank(ms_pool, cfg["profile"], min_ms, model,
+                                     pool_name="news")
+                merged, seen_ids = [], set()
+                for it in ms_top:                    # reserved mainstream first
+                    if it["id"] not in seen_ids:
+                        merged.append(it); seen_ids.add(it["id"])
+                for it in top_news:                  # fill the rest by rank
+                    if len(merged) >= k_news:
+                        break
+                    if it["id"] not in seen_ids:
+                        merged.append(it); seen_ids.add(it["id"])
+                top_news = merged[:k_news]
+                print(f"[rank] guaranteed {len(ms_top)} mainstream news items")
+
     print(f"[rank] papers picked: {len(top_papers)} | news picked: {len(top_news)}")
 
     chosen = top_papers + top_news
