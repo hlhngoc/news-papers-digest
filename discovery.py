@@ -45,6 +45,18 @@ def _search_papers(query: str, limit: int, since: datetime) -> list[dict]:
             },
             timeout=_HTTP_TIMEOUT,
         )
+        if r.status_code == 429:
+            time.sleep(5)  # S2 free tier is strict; back off once and retry
+            r = requests.get(
+                _S2_SEARCH,
+                params={
+                    "query": query, "limit": limit,
+                    "fields": "title,abstract,url,year,citationCount,"
+                              "publicationDate,externalIds,authors",
+                    "sort": "publicationDate:desc",
+                },
+                timeout=_HTTP_TIMEOUT,
+            )
         if r.status_code != 200:
             print(f"[discovery/s2] '{query}' -> HTTP {r.status_code}, skipping")
             return []
@@ -152,7 +164,7 @@ def discover(queries: list[str], min_points: int, per_query: int,
             if item["id"] not in seen_ids:
                 seen_ids.add(item["id"])
                 out.append(item)
-        time.sleep(1)  # be polite to Semantic Scholar's free tier
+        time.sleep(3)  # be polite to Semantic Scholar's free tier
         for item in _search_news(q, per_query, min_points, since):
             if item["id"] not in seen_ids:
                 seen_ids.add(item["id"])

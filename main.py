@@ -126,7 +126,24 @@ def run(dry_run: bool = False) -> None:
         return  # nothing sent -> mark nothing, keep items eligible next run
 
     # 4. WRITE-UP — one call covering both pools ---------------------------
-    digest = ranker.write_up(chosen, cfg["profile"], model, lang)
+    try:
+        digest = ranker.write_up(chosen, cfg["profile"], model, lang)
+    except Exception as e:
+        # Gemini fully unavailable — don't lose the digest. Fall back to a
+        # basic version built from the raw titles/abstracts (no AI summary).
+        print(f"[warn] write_up failed ({e}); sending basic digest without "
+              f"AI summaries.")
+        digest = {
+            "overview": "",
+            "items": [
+                {**it,
+                 "title_vi": it["title"],
+                 "title_original": it["title"],
+                 "summary": (it.get("abstract") or "")[:400],
+                 "why": ""}
+                for it in chosen
+            ],
+        }
 
     # 5. EMAIL -------------------------------------------------------------
     subject = (

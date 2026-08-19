@@ -27,8 +27,23 @@ _client: genai.Client | None = None
 # Retry on transient server-side issues (overloaded model, rate limit, etc).
 # 503/429 are almost always temporary and clear up within a minute or two.
 _RETRYABLE_CODES = {429, 500, 502, 503, 504}
-_MAX_ATTEMPTS = 5
-_BASE_DELAY_S = 8  # exponential backoff: 8s, 16s, 32s, 64s...
+_MAX_ATTEMPTS = 4          # attempts PER model before falling back
+_BASE_DELAY_S = 8          # exponential backoff: 8s, 16s, 32s...
+
+# When the chosen model is overloaded (503), fall back to these in order.
+# Overload is usually per-model, so a different Flash variant often works.
+_FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-flash-latest",
+                    "gemini-2.5-flash"]
+
+
+def _model_chain(primary: str) -> list[str]:
+    """Primary model first, then fallbacks (de-duplicated)."""
+    chain, seen = [], set()
+    for m in [primary, *_FALLBACK_MODELS]:
+        if m and m not in seen:
+            seen.add(m)
+            chain.append(m)
+    return chain
 
 
 def _get_client() -> genai.Client:
@@ -43,31 +58,39 @@ def _get_client() -> genai.Client:
 
 def _generate_json(model: str, prompt: str) -> dict | list:
     """Call Gemini and parse a JSON response. Retries on transient server
-    errors (503 overloaded, 429 rate-limited) with exponential backoff.
+    errors (503 overloaded, 429 rate-limited) with exponential backoff, and
+    falls back to alternate models if one stays overloaded.
     Robust to stray json code fences in the response text."""
     last_err = None
-    for attempt in range(1, _MAX_ATTEMPTS + 1):
-        try:
-            resp = _get_client().models.generate_content(
-                model=model,
-                contents=prompt,
-                config={"response_mime_type": "application/json"},
-            )
-            text = (resp.text or "").strip()
-            if text.startswith("```"):
-                text = text.strip("`")
-                text = text[text.find("{") if "{" in text else text.find("["):]
-            return json.loads(text)
-        except genai_errors.APIError as e:
-            last_err = e
-            code = getattr(e, "code", None)
-            if code in _RETRYABLE_CODES and attempt < _MAX_ATTEMPTS:
-                delay = _BASE_DELAY_S * (2 ** (attempt - 1))
-                print(f"[gemini] {code} on attempt {attempt}/{_MAX_ATTEMPTS}, "
-                      f"retrying in {delay}s...")
-                time.sleep(delay)
-                continue
-            raise
+    for m in _model_chain(model):
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                resp = _get_client().models.generate_content(
+                    model=m,
+                    contents=prompt,
+                    config={"response_mime_type": "application/json"},
+                )
+                text = (resp.text or "").strip()
+                if text.startswith("```"):
+                    text = text.strip("`")
+                    text = text[text.find("{") if "{" in text else text.find("["):]
+                if m != model:
+                    print(f"[gemini] succeeded on fallback model {m}")
+                return json.loads(text)
+            except genai_errors.APIError as e:
+                last_err = e
+                code = getattr(e, "code", None)
+                if code in _RETRYABLE_CODES and attempt < _MAX_ATTEMPTS:
+                    delay = _BASE_DELAY_S * (2 ** (attempt - 1))
+                    print(f"[gemini] {m}: {code} attempt {attempt}/"
+                          f"{_MAX_ATTEMPTS}, retry in {delay}s...")
+                    time.sleep(delay)
+                    continue
+                if code in _RETRYABLE_CODES:
+                    print(f"[gemini] {m} still {code} after {_MAX_ATTEMPTS} "
+                          f"tries, falling back to next model...")
+                    break  # exhausted this model -> try next in chain
+                raise      # non-retryable error -> stop now
     raise last_err
 
 
