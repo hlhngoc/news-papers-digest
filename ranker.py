@@ -27,11 +27,14 @@ _client: genai.Client | None = None
 # Retry on transient server-side issues (overloaded model, rate limit, etc).
 # 503/429 are almost always temporary and clear up within a minute or two.
 _RETRYABLE_CODES = {429, 500, 502, 503, 504}
-_MAX_ATTEMPTS = 4          # attempts PER model before falling back
-_BASE_DELAY_S = 8          # exponential backoff: 8s, 16s, 32s...
 
-# When the chosen model is overloaded (503), fall back to these in order.
-# Overload is usually per-model, so a different Flash variant often works.
+# Be patient rather than fast: when Gemini is overloaded, waiting a minute or
+# two usually works, and a late digest beats a bad one. Delays PER model:
+_RETRY_DELAYS_S = [30, 60, 120, 120]     # 4 attempts, ~5.5 min per model
+_MAX_ATTEMPTS = len(_RETRY_DELAYS_S)
+
+# When a model stays overloaded, fall back to these in order. Overload is
+# usually per-model, so a different Flash variant often goes through.
 _FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-flash-latest",
                     "gemini-2.5-flash"]
 
@@ -81,9 +84,9 @@ def _generate_json(model: str, prompt: str) -> dict | list:
                 last_err = e
                 code = getattr(e, "code", None)
                 if code in _RETRYABLE_CODES and attempt < _MAX_ATTEMPTS:
-                    delay = _BASE_DELAY_S * (2 ** (attempt - 1))
+                    delay = _RETRY_DELAYS_S[attempt - 1]
                     print(f"[gemini] {m}: {code} attempt {attempt}/"
-                          f"{_MAX_ATTEMPTS}, retry in {delay}s...")
+                          f"{_MAX_ATTEMPTS}, waiting {delay}s before retry...")
                     time.sleep(delay)
                     continue
                 if code in _RETRYABLE_CODES:
@@ -91,51 +94,6 @@ def _generate_json(model: str, prompt: str) -> dict | list:
                           f"tries, falling back to next model...")
                     break  # exhausted this model -> try next in chain
                 raise      # non-retryable error -> stop now
-    raise last_err
-
-
-def generate_grounded_json(model: str, prompt: str) -> dict | list:
-    """Like _generate_json but enables Gemini's Google Search tool so the model
-    can actually browse the web. NOTE: grounding can't be combined with a forced
-    JSON mime type, so we ask for JSON in the prompt and parse it loosely.
-    Retries on transient 503/429 with the same backoff."""
-    from google.genai import types
-
-    last_err = None
-    for attempt in range(1, _MAX_ATTEMPTS + 1):
-        try:
-            resp = _get_client().models.generate_content(
-                model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                ),
-            )
-            text = (resp.text or "").strip()
-            # Grounded responses often wrap JSON in prose/fences; extract it.
-            if "```" in text:
-                text = text.split("```")[1] if text.count("```") >= 2 else text
-                text = text.lstrip("json").strip("`").strip()
-            start = text.find("{")
-            end = text.rfind("}")
-            if start != -1 and end != -1:
-                text = text[start:end + 1]
-            return json.loads(text)
-        except genai_errors.APIError as e:
-            last_err = e
-            code = getattr(e, "code", None)
-            if code in _RETRYABLE_CODES and attempt < _MAX_ATTEMPTS:
-                delay = _BASE_DELAY_S * (2 ** (attempt - 1))
-                print(f"[gemini] {code} on grounded attempt {attempt}/"
-                      f"{_MAX_ATTEMPTS}, retrying in {delay}s...")
-                time.sleep(delay)
-                continue
-            raise
-        except (json.JSONDecodeError, ValueError) as e:
-            # Grounded output is chattier and can fail to parse; don't kill the
-            # whole run over a failed discovery pass.
-            print(f"[discovery] could not parse grounded JSON: {e}")
-            return {}
     raise last_err
 
 
@@ -208,6 +166,36 @@ CANDIDATES:
 
 
 # ------------------------------------------------------------------ write_up
+# Vietnamese-specific diacritics — English text will contain none of these.
+_VI_CHARS = set("ăâđêôơưàảãáạằẳẵắặầẩẫấậèẻẽéẹềểễếệ"
+                "ìỉĩíịòỏõóọồổỗốộờởỡớợùủũúụừửữứựỳỷỹýỵ")
+# Common Vietnamese function words, as a second signal.
+_VI_WORDS = {"và", "của", "cho", "với", "này", "được", "các", "những",
+             "trong", "là", "có", "người", "một", "để", "khi", "từ"}
+
+
+def _looks_vietnamese(data: dict) -> bool:
+    """True if the model's write-up is actually in Vietnamese.
+
+    Checks the free-text fields (not titles, which may legitimately stay
+    English). Requires both diacritics and common Vietnamese words, so an
+    English text with one stray accented name doesn't pass.
+    """
+    if not isinstance(data, dict):
+        return False
+    chunks = [str(data.get("overview", ""))]
+    for d in data.get("items", []):
+        if isinstance(d, dict):
+            chunks.append(str(d.get("summary", "")))
+            chunks.append(str(d.get("why", "")))
+    text = " ".join(chunks).lower().strip()
+    if not text:
+        return False
+    has_diacritics = any(ch in _VI_CHARS for ch in text)
+    word_hits = sum(1 for w in _VI_WORDS if f" {w} " in f" {text} ")
+    return has_diacritics and word_hits >= 2
+
+
 def write_up(items: list[dict], profile: str, model: str,
              language: str) -> dict:
     """Summaries + why-it-matters for BOTH pools' winners, one shared overview.
@@ -219,9 +207,13 @@ def write_up(items: list[dict], profile: str, model: str,
         return {"overview": "", "items": []}
 
     lang_rule = (
-        "Write summaries, why-it-matters, and the overview in VIETNAMESE. "
-        "Also translate each title to Vietnamese ('title_vi'); keep the "
-        "original in 'title_original'."
+        "CRITICAL LANGUAGE REQUIREMENT: every 'summary', every 'why', the "
+        "'overview', and every 'title_vi' MUST be written in VIETNAMESE. "
+        "Do NOT write them in English. The source material is in English — "
+        "translate and rewrite it into natural Vietnamese. Keep the untouched "
+        "English title in 'title_original'. Technical terms (machine learning, "
+        "transformer, backtesting, etc.) may stay in English inside otherwise "
+        "Vietnamese sentences."
         if language == "vi" else
         "Write everything in ENGLISH. Set 'title_vi' equal to the original title."
     )
@@ -269,7 +261,25 @@ ITEMS:
 {body}
 """
 
-    data = _generate_json(model, prompt)
+    # Ask, then VERIFY the language. Models under load sometimes ignore the
+    # language instruction and answer in English; retry rather than ship it.
+    data = {}
+    for lang_try in range(1, 3):
+        data = _generate_json(model, prompt)
+        if language != "vi" or _looks_vietnamese(data):
+            break
+        print(f"[lang] output came back in English on try {lang_try}/2, "
+              f"asking again in Vietnamese...")
+        prompt += ("\n\nIMPORTANT: your previous answer was in English. "
+                   "Rewrite EVERYTHING (summary, why, overview, title_vi) "
+                   "in VIETNAMESE this time.")
+    else:
+        # Both tries came back English — better to fail than send a digest in
+        # the wrong language; the caller will surface the error.
+        raise RuntimeError(
+            "Gemini kept returning English despite Vietnamese being requested"
+        )
+
     by_index = {d["index"]: d for d in data.get("items", [])
                 if isinstance(d.get("index"), int)}
 
