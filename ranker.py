@@ -21,6 +21,7 @@ import time
 
 from google import genai
 from google.genai import errors as genai_errors
+from google.genai import types
 
 _client: genai.Client | None = None
 
@@ -59,27 +60,56 @@ def _get_client() -> genai.Client:
     return _client
 
 
-def _generate_json(model: str, prompt: str) -> dict | list:
+def _generate_json(model: str, prompt: str, schema: dict | None = None,
+                    max_output_tokens: int | None = None) -> dict | list:
     """Call Gemini and parse a JSON response. Retries on transient server
-    errors (503 overloaded, 429 rate-limited) with exponential backoff, and
-    falls back to alternate models if one stays overloaded.
+    errors (503 overloaded, 429 rate-limited) AND on malformed/truncated JSON
+    (also usually transient — a re-roll or a different model fixes it), with
+    backoff, falling back to alternate models if one stays overloaded.
+
+    Thinking is disabled: this is plain extraction/translation, not multi-step
+    reasoning, and on thinking-enabled models "thoughts" silently eat into the
+    output token budget, which is exactly what caused truncated/invalid JSON
+    on the fuller prompts (many items). Disabling it frees the whole budget
+    for the actual answer. Some models reject thinking_budget=0 outright, so
+    that combination is retried once without thinking_config before moving on.
     Robust to stray json code fences in the response text."""
     last_err = None
     for m in _model_chain(model):
-        for attempt in range(1, _MAX_ATTEMPTS + 1):
+        no_thinking = True
+        attempt = 1
+        while attempt <= _MAX_ATTEMPTS:
+            config: dict = {"response_mime_type": "application/json"}
+            if schema is not None:
+                config["response_json_schema"] = schema
+            if max_output_tokens:
+                config["max_output_tokens"] = max_output_tokens
+            if no_thinking:
+                config["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
             try:
                 resp = _get_client().models.generate_content(
-                    model=m,
-                    contents=prompt,
-                    config={"response_mime_type": "application/json"},
+                    model=m, contents=prompt, config=config,
                 )
                 text = (resp.text or "").strip()
                 if text.startswith("```"):
                     text = text.strip("`")
                     text = text[text.find("{") if "{" in text else text.find("["):]
+                if not text:
+                    raise ValueError("empty response text")
+                data = json.loads(text)
                 if m != model:
                     print(f"[gemini] succeeded on fallback model {m}")
-                return json.loads(text)
+                return data
+            except genai_errors.ClientError as e:
+                # Some models reject thinking_budget=0 with a 400 — retry the
+                # same attempt once without it rather than burning a retry slot.
+                if no_thinking and getattr(e, "code", None) == 400:
+                    print(f"[gemini] {m}: rejected thinking_budget=0, "
+                          f"retrying without it...")
+                    no_thinking = False
+                    continue
+                last_err = e
+                raise
             except genai_errors.APIError as e:
                 last_err = e
                 code = getattr(e, "code", None)
@@ -88,13 +118,48 @@ def _generate_json(model: str, prompt: str) -> dict | list:
                     print(f"[gemini] {m}: {code} attempt {attempt}/"
                           f"{_MAX_ATTEMPTS}, waiting {delay}s before retry...")
                     time.sleep(delay)
+                    attempt += 1
                     continue
                 if code in _RETRYABLE_CODES:
                     print(f"[gemini] {m} still {code} after {_MAX_ATTEMPTS} "
                           f"tries, falling back to next model...")
                     break  # exhausted this model -> try next in chain
                 raise      # non-retryable error -> stop now
+            except (json.JSONDecodeError, ValueError) as e:
+                # Malformed/truncated JSON — treat like a retryable server
+                # error: same model gets another roll, then fall back.
+                last_err = e
+                if attempt < _MAX_ATTEMPTS:
+                    delay = _RETRY_DELAYS_S[attempt - 1]
+                    print(f"[gemini] {m}: bad JSON ({e}) attempt {attempt}/"
+                          f"{_MAX_ATTEMPTS}, waiting {delay}s before retry...")
+                    time.sleep(delay)
+                    attempt += 1
+                    continue
+                print(f"[gemini] {m} still returning bad JSON after "
+                      f"{_MAX_ATTEMPTS} tries, falling back to next model...")
+                break
     raise last_err
+
+
+_RANK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "picks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "score": {"type": "integer"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["index", "score", "reason"],
+            },
+        },
+    },
+    "required": ["picks"],
+}
 
 
 # --------------------------------------------------------------------- rank
@@ -151,7 +216,11 @@ CANDIDATES:
 {catalogue}
 """
 
-    data = _generate_json(model, prompt)
+    # Output is just k short picks regardless of catalogue size — a small,
+    # generous budget is plenty and keeps the model from stalling on it.
+    out_tokens = min(2048, 300 * k + 400)
+    data = _generate_json(model, prompt, schema=_RANK_SCHEMA,
+                          max_output_tokens=out_tokens)
     picks = data.get("picks", []) if isinstance(data, dict) else []
 
     chosen: list[dict] = []
@@ -166,6 +235,29 @@ CANDIDATES:
 
 
 # ------------------------------------------------------------------ write_up
+_WRITE_UP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "overview": {"type": "string"},
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "title_vi": {"type": "string"},
+                    "title_original": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "why": {"type": "string"},
+                },
+                "required": ["index", "title_vi", "title_original",
+                             "summary", "why"],
+            },
+        },
+    },
+    "required": ["overview", "items"],
+}
+
 # Vietnamese-specific diacritics — English text will contain none of these.
 _VI_CHARS = set("ăâđêôơưàảãáạằẳẵắặầẩẫấậèẻẽéẹềểễếệ"
                 "ìỉĩíịòỏõóọồổỗốộờởỡớợùủũúụừửữứựỳỷỹýỵ")
@@ -174,26 +266,54 @@ _VI_WORDS = {"và", "của", "cho", "với", "này", "được", "các", "nhữn
              "trong", "là", "có", "người", "một", "để", "khi", "từ"}
 
 
-def _looks_vietnamese(data: dict) -> bool:
-    """True if the model's write-up is actually in Vietnamese.
+def _has_vi_diacritics(text: str) -> bool:
+    return any(ch in _VI_CHARS for ch in text.lower())
 
-    Checks the free-text fields (not titles, which may legitimately stay
-    English). Requires both diacritics and common Vietnamese words, so an
-    English text with one stray accented name doesn't pass.
-    """
-    if not isinstance(data, dict):
-        return False
-    chunks = [str(data.get("overview", ""))]
-    for d in data.get("items", []):
-        if isinstance(d, dict):
-            chunks.append(str(d.get("summary", "")))
-            chunks.append(str(d.get("why", "")))
-    text = " ".join(chunks).lower().strip()
+
+def _looks_vietnamese(text: str) -> bool:
+    """Aggregate check for a longer chunk of text: requires both diacritics
+    and common function words, so one stray accented name doesn't pass."""
+    text = text.lower().strip()
     if not text:
         return False
     has_diacritics = any(ch in _VI_CHARS for ch in text)
     word_hits = sum(1 for w in _VI_WORDS if f" {w} " in f" {text} ")
     return has_diacritics and word_hits >= 2
+
+
+def _validate_write_up(data, n_items: int, language: str) -> str | None:
+    """None if `data` is a complete, correctly-languaged write-up; otherwise
+    a short human-readable reason it was rejected (used both to decide
+    whether to retry and, if retries run out, to explain the final failure).
+
+    Checking completeness AND per-item language here (not just an aggregate
+    "does the whole blob look Vietnamese" check) matters: if the model drops
+    or skips an item, the rest of the response can still look fine in
+    aggregate while that one item silently ends up without a translated
+    summary — which is exactly what used to slip through and ship English
+    text inside an otherwise-Vietnamese digest.
+    """
+    if not isinstance(data, dict):
+        return "response was not a JSON object"
+    items = data.get("items")
+    if not isinstance(items, list):
+        return "missing 'items' array"
+    by_index = {d.get("index"): d for d in items if isinstance(d, dict)}
+    missing = [i for i in range(n_items) if i not in by_index]
+    if missing:
+        return f"missing write-up for item index(es) {missing}"
+    for i in range(n_items):
+        d = by_index[i]
+        summary = str(d.get("summary") or "").strip()
+        why = str(d.get("why") or "").strip()
+        if not summary or not why:
+            return f"item {i} has an empty summary or why"
+        if language == "vi" and not (_has_vi_diacritics(summary)
+                                      and _has_vi_diacritics(why)):
+            return f"item {i}'s summary/why came back in English"
+    if language == "vi" and not _looks_vietnamese(str(data.get("overview", ""))):
+        return "overview came back in English"
+    return None
 
 
 def write_up(items: list[dict], profile: str, model: str,
@@ -261,36 +381,47 @@ ITEMS:
 {body}
 """
 
-    # Ask, then VERIFY the language. Models under load sometimes ignore the
-    # language instruction and answer in English; retry rather than ship it.
-    data = {}
-    for lang_try in range(1, 3):
-        data = _generate_json(model, prompt)
-        if language != "vi" or _looks_vietnamese(data):
+    # Generous per-item output budget — this is what was getting silently
+    # squeezed by thinking tokens on the fuller (10-item) prompts, producing
+    # truncated JSON. ~450 tokens/item covers summary+why+two titles.
+    out_tokens = min(8192, 450 * len(items) + 700)
+
+    # Ask, then VALIDATE: completeness (every item present) and, for "vi",
+    # that EVERY item individually is actually in Vietnamese — not just the
+    # response as a whole. Retry rather than ship a partial/wrong-language
+    # digest; fail loudly if it still doesn't come together.
+    data: dict = {}
+    reason = None
+    for attempt in range(1, 4):
+        data = _generate_json(model, prompt, schema=_WRITE_UP_SCHEMA,
+                              max_output_tokens=out_tokens)
+        reason = _validate_write_up(data, len(items), language)
+        if reason is None:
             break
-        print(f"[lang] output came back in English on try {lang_try}/2, "
-              f"asking again in Vietnamese...")
-        prompt += ("\n\nIMPORTANT: your previous answer was in English. "
-                   "Rewrite EVERYTHING (summary, why, overview, title_vi) "
-                   "in VIETNAMESE this time.")
+        print(f"[write_up] attempt {attempt}/3 rejected ({reason}), "
+              f"retrying...")
+        prompt += (
+            f"\n\nIMPORTANT: your previous answer was rejected — {reason}. "
+            f"Return EVERY item index 0..{len(items) - 1} with a non-empty "
+            f"summary and why"
+            + (", written in VIETNAMESE." if language == "vi" else ".")
+        )
     else:
-        # Both tries came back English — better to fail than send a digest in
-        # the wrong language; the caller will surface the error.
         raise RuntimeError(
-            "Gemini kept returning English despite Vietnamese being requested"
+            f"Gemini could not produce a usable write-up after 3 tries "
+            f"(last problem: {reason})"
         )
 
-    by_index = {d["index"]: d for d in data.get("items", [])
-                if isinstance(d.get("index"), int)}
+    by_index = {d.get("index"): d for d in data["items"] if isinstance(d, dict)}
 
     enriched = []
     for i, it in enumerate(items):
-        w = by_index.get(i, {})
+        w = by_index[i]
         out = dict(it)
-        out["title_vi"] = w.get("title_vi", it["title"])
-        out["title_original"] = w.get("title_original", it["title"])
-        out["summary"] = w.get("summary", it["abstract"][:300])
-        out["why"] = w.get("why", "")
+        out["title_vi"] = w.get("title_vi") or it["title"]
+        out["title_original"] = w.get("title_original") or it["title"]
+        out["summary"] = w["summary"]
+        out["why"] = w["why"]
         enriched.append(out)
 
     return {"overview": data.get("overview", ""), "items": enriched}
