@@ -36,18 +36,32 @@ _MAX_ATTEMPTS = len(_RETRY_DELAYS_S)
 
 # When a model stays overloaded, fall back to these in order. Overload is
 # usually per-model, so a different Flash variant often goes through.
-_FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-flash-latest",
-                    "gemini-2.5-flash"]
+# Checked against Google's deprecations page (Nov 2026):
+#   gemini-3.5-flash-lite -> current Flash-Lite, no shutdown date
+#   gemini-3.6-flash      -> stable Flash, no shutdown date
+#   gemini-3.1-flash-lite -> shuts down May 2027 (last resort)
+# gemini-2.5-* dropped: Google now limits 2.5 access to past users.
+_FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.6-flash",
+                    "gemini-3.1-flash-lite"]
+
+
+# Models that already failed hard in THIS run (overloaded after all retries,
+# 404, persistent network errors). Later calls skip them so we don't burn
+# ~3.5 min per call re-discovering that the same model is still down.
+_dead_models: set[str] = set()
 
 
 def _model_chain(primary: str) -> list[str]:
-    """Primary model first, then fallbacks (de-duplicated)."""
+    """Primary model first, then fallbacks (de-duplicated), minus models
+    already marked dead this run. If everything is dead, try them all again
+    rather than giving up."""
     chain, seen = [], set()
     for m in [primary, *_FALLBACK_MODELS]:
         if m and m not in seen:
             seen.add(m)
             chain.append(m)
-    return chain
+    alive = [m for m in chain if m not in _dead_models]
+    return alive or chain
 
 
 def _get_client() -> genai.Client:
@@ -123,6 +137,7 @@ def _generate_json(model: str, prompt: str, schema: dict | None = None,
                 if getattr(e, "code", None) == 404:
                     print(f"[gemini] {m}: 404 model not found, "
                           f"falling back to next model...")
+                    _dead_models.add(m)
                     break
                 if getattr(e, "code", None) == 429:
                     # ClientError covers 429 too; let the retry logic below
@@ -135,6 +150,7 @@ def _generate_json(model: str, prompt: str, schema: dict | None = None,
                         attempt += 1
                         continue
                     print(f"[gemini] {m} still 429, falling back to next model...")
+                    _dead_models.add(m)
                     break
                 raise
             except genai_errors.APIError as e:
@@ -150,6 +166,7 @@ def _generate_json(model: str, prompt: str, schema: dict | None = None,
                 if code in _RETRYABLE_CODES:
                     print(f"[gemini] {m} still {code} after {_MAX_ATTEMPTS} "
                           f"tries, falling back to next model...")
+                    _dead_models.add(m)
                     break  # exhausted this model -> try next in chain
                 raise      # non-retryable error -> stop now
             except (json.JSONDecodeError, ValueError) as e:
@@ -165,6 +182,7 @@ def _generate_json(model: str, prompt: str, schema: dict | None = None,
                     continue
                 print(f"[gemini] {m} still returning bad JSON after "
                       f"{_MAX_ATTEMPTS} tries, falling back to next model...")
+                _dead_models.add(m)
                 break
             except Exception as e:
                 # Network-level failures (server dropped the connection,
@@ -181,6 +199,7 @@ def _generate_json(model: str, prompt: str, schema: dict | None = None,
                     continue
                 print(f"[gemini] {m} still failing with {name}, "
                       f"falling back to next model...")
+                _dead_models.add(m)
                 break
     raise last_err
 

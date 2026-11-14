@@ -5,19 +5,24 @@
 # Free-text description of who you are. The LLM reads this verbatim to decide
 # what's relevant and to write the "why this matters for you" line.
 profile: |
-  I'm a first-year Data Science student at VinUniversity (Hanoi).
-  My core interests, in rough priority order:
-    1. Quantitative finance — algorithmic trading, alpha research, factor models,
+  I'm a second-year Data Science student at VinUniversity (Hanoi).
+  MAIN interests (rank these highest):
+    1. AI & data governance / tech risk — how organizations evaluate, audit,
+       and regulate AI systems: AI risk-management frameworks, AI regulation
+       (e.g. the EU AI Act), model risk management, data governance, IT audit
+       and controls, responsible AI — especially in financial services.
+    2. Consulting & strategy — management consulting insights (McKinsey/BCG/
+       Bain, Big 4), how firms adopt and govern AI, data-driven strategy,
+       operating models, and how DS skills translate into consulting careers.
+  SECONDARY interests (include only when clearly useful):
+    3. Quantitative finance — algorithmic trading, alpha research, factor models,
        market microstructure, futures (esp. index futures like VN30F1M),
        backtesting methodology, regime detection.
-    2. Applied machine learning & statistics — practical DS/ML methods I can use
+    4. Applied machine learning & statistics — practical DS/ML methods I can use
        in projects: time series, calibration, clustering, regression, feature
        engineering, model evaluation. I care about methods, not pure theory.
-    3. IoT / air quality sensing — low-cost sensor calibration, activity
-       recognition, Arduino-based environmental sensing (this is my UROP).
-    4. Consulting & career — management consulting insights (McKinsey/BCG/Bain),
-       data-driven strategy, the economics/management side of a DS career,
-       how quant/DS skills translate to high-paying roles.
+    5. IoT / air quality sensing — low-cost sensor calibration, activity
+       recognition, Arduino-based environmental sensing (my UROP).
   I want a working professional's practical angle, not deep theoretical proofs.
   Bias toward things I could actually apply, cite in a project, or use to make
   a career decision.
@@ -44,8 +49,11 @@ news_mainstream_domains:
 language: vi
 
 # Which Gemini model powers ranking + summaries.
-#   gemini-flash-latest    -> always the newest Flash (currently 3.5). Good default.
-#   gemini-3.1-flash-lite  -> cheapest, near-free. Fine for this task.
+#   gemini-flash-latest    -> always the newest Flash (3.8 as of Nov 2026). Best
+#                             quality but often 503-overloaded right after launches.
+#   gemini-3.6-flash       -> stable Flash, usually less congested.
+#   gemini-3.5-flash-lite  -> cheapest, current Flash-Lite. Fine for this task.
+#   (gemini-3.1-flash-lite shuts down May 2027; avoid for new setups.)
 model: gemini-flash-latest
 
 # ---------------------------------------------------------------- DISCOVERY
@@ -55,13 +63,14 @@ model: gemini-flash-latest
 # Edit these queries when your interests shift (this is the discovery "profile").
 discovery: true
 discovery_queries:
-  - PM2.5 low-cost sensor calibration
-  - wavelet scattering time series forecasting
-  - cross wavelet coherence signals
-  - VN30 index futures quantitative trading
-  - factor model alpha research backtesting
-  - LLM agents for data analysis
+  - AI governance risk management framework
+  - EU AI Act compliance financial services
+  - model risk management machine learning banks
+  - data governance AI audit
   - management consulting AI strategy
+  - AI operating model enterprise adoption
+  - PM2.5 low-cost sensor calibration
+  - factor model alpha research backtesting
 discovery_per_query: 3      # items to pull per query, per source
 
 # ------------------------------------------------------------------ SOURCES
@@ -72,10 +81,12 @@ sources:
     - cs.LG      # Machine Learning
     - cs.AI      # Artificial Intelligence
     - cs.CL      # Computation & Language (NLP)
+    - cs.CY      # Computers & Society — AI policy, governance, fairness
     - stat.ML    # Statistics - Machine Learning
     - stat.AP    # Statistics - Applications
     - q-fin.TR   # Quantitative Finance - Trading & Microstructure
     - q-fin.ST   # Quantitative Finance - Statistical Finance
+    - q-fin.RM   # Quantitative Finance - Risk Management
 
   # How far back to look (hours). arXiv skips weekends, so keep >24h.
   arxiv_lookback_hours: 60
@@ -106,6 +117,13 @@ sources:
     - agent
     - consulting
     - mckinsey
+    - governance
+    - regulation
+    - ai act
+    - audit
+    - compliance
+    - fintech
+    - bank
   hackernews_min_score: 50
 
   # Tech-news RSS (goes into the NEWS pool).
@@ -127,16 +145,24 @@ sources:
     # --- TLDR newsletters (community-maintained RSS; may occasionally break) ---
     - https://bullrich.dev/tldr-rss/ai.rss            # TLDR AI: daily model/research/tool roundup
     - https://bullrich.dev/tldr-rss/data.rss          # TLDR Data: data science / data eng
+    # --- AI governance, regulation & policy (checked live Nov 2026) ---
+    - https://artificialintelligenceact.substack.com/feed   # EU AI Act Newsletter (Future of Life Institute)
+    - https://cset.georgetown.edu/feed/                     # Georgetown CSET: AI policy & security research
+    - https://www.theverge.com/rss/policy/index.xml         # The Verge: tech policy & regulation
+    - https://feeds.arstechnica.com/arstechnica/tech-policy # Ars Technica: tech policy
+    # --- Finance & fintech (AI/risk in banking) ---
+    - https://www.finextra.com/rss/headlines.aspx           # Finextra: fintech & banking tech
+    - https://www.bankingdive.com/feeds/news/               # Banking Dive: banking industry, regulation
     # --- Local tech news (Vietnamese). Remove if too noisy. ---
     - https://vnexpress.net/rss/so-hoa.rss
 
   # Consulting / strategy RSS (also NEWS pool).
+  # (Checked Nov 2026. Removed: BCG rss/insights -> 404; HBR feed -> 403/blocked.)
   consulting_feeds:
     - https://www.mckinsey.com/insights/rss
     - https://sloanreview.mit.edu/feed/
-    - https://hbr.org/resources/xml/rss/hbr_rss_feed.xml
-    - https://www.bcg.com/rss/insights
     - https://knowledge.wharton.upenn.edu/feed/
+    - https://www.strategy-business.com/technology.xml   # PwC strategy+business: tech & AI strategy
 
 # Per-pool cap on candidates sent to the ranker (protects token bill).
 max_candidates_per_pool: 60
