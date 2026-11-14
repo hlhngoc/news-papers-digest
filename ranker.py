@@ -61,7 +61,10 @@ def _get_client() -> genai.Client:
         # response_json_schema) don't exist -> 404 NOT_FOUND.
         _client = genai.Client(
             api_key=key,
-            http_options=types.HttpOptions(api_version="v1beta"),
+            # timeout in ms: a hung connection fails fast and gets retried
+            # instead of eating the whole job's time budget.
+            http_options=types.HttpOptions(api_version="v1beta",
+                                           timeout=180_000),
         )
     return _client
 
@@ -162,6 +165,22 @@ def _generate_json(model: str, prompt: str, schema: dict | None = None,
                     continue
                 print(f"[gemini] {m} still returning bad JSON after "
                       f"{_MAX_ATTEMPTS} tries, falling back to next model...")
+                break
+            except Exception as e:
+                # Network-level failures (server dropped the connection,
+                # read timeout, connection reset...) come from the HTTP layer,
+                # not as APIError. They're transient: retry, then fall back.
+                last_err = e
+                name = type(e).__name__
+                if attempt < _MAX_ATTEMPTS:
+                    delay = _RETRY_DELAYS_S[attempt - 1]
+                    print(f"[gemini] {m}: network error {name}: {e} attempt "
+                          f"{attempt}/{_MAX_ATTEMPTS}, waiting {delay}s...")
+                    time.sleep(delay)
+                    attempt += 1
+                    continue
+                print(f"[gemini] {m} still failing with {name}, "
+                      f"falling back to next model...")
                 break
     raise last_err
 

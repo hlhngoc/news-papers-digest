@@ -37,7 +37,7 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           DIGEST_TO: ${{ secrets.DIGEST_TO }}   # optional
-        run: python main.py
+        run: python -u main.py
 
       - name: Persist dedupe DB
         run: |
