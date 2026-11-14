@@ -56,7 +56,13 @@ def _get_client() -> genai.Client:
         key = os.environ.get("GEMINI_API_KEY")
         if not key:
             raise RuntimeError("GEMINI_API_KEY is not set")
-        _client = genai.Client(api_key=key)
+        # Pin v1beta: google-genai >=3 defaults the Gemini API to "v1", where
+        # aliases like "gemini-flash-latest" (and some config fields such as
+        # response_json_schema) don't exist -> 404 NOT_FOUND.
+        _client = genai.Client(
+            api_key=key,
+            http_options=types.HttpOptions(api_version="v1beta"),
+        )
     return _client
 
 
@@ -109,6 +115,24 @@ def _generate_json(model: str, prompt: str, schema: dict | None = None,
                     no_thinking = False
                     continue
                 last_err = e
+                # Model retired/renamed/unavailable for this key -> don't kill
+                # the whole run, move on to the next model in the chain.
+                if getattr(e, "code", None) == 404:
+                    print(f"[gemini] {m}: 404 model not found, "
+                          f"falling back to next model...")
+                    break
+                if getattr(e, "code", None) == 429:
+                    # ClientError covers 429 too; let the retry logic below
+                    # handle it like other transient errors.
+                    if attempt < _MAX_ATTEMPTS:
+                        delay = _RETRY_DELAYS_S[attempt - 1]
+                        print(f"[gemini] {m}: 429 attempt {attempt}/"
+                              f"{_MAX_ATTEMPTS}, waiting {delay}s before retry...")
+                        time.sleep(delay)
+                        attempt += 1
+                        continue
+                    print(f"[gemini] {m} still 429, falling back to next model...")
+                    break
                 raise
             except genai_errors.APIError as e:
                 last_err = e
